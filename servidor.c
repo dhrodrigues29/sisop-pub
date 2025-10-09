@@ -263,7 +263,7 @@ static void *process_request_thread(void *arg) {
             send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_FAILED_INSUF_FUNDS);
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
-            enqueue_message("%s client %s id req %u dest %s value %u FAILED: Saldo Insuficiente \n num transactions %llu \n total transferred %llu total balance %lld",
+            enqueue_message("%s client %s id req %u dest %s value %u FAILED: Saldo Insuficiente \nnum transactions %llu \ntotal transferred %llu total balance %lld",
                             tstamp, origin_str, seqn, dest_str, value,
                             (unsigned long long)num_transactions,
                             (unsigned long long)total_transferred,
