@@ -22,7 +22,7 @@
 #define TYPE_REQ_ACK 4
 
 // Constante para o número de transações automáticas
-#define T 10
+#define T 1000
 
 // Tabela de IPs de destino disponíveis (exemplo)
 static const char *AVAILABLE_IPS[] = {
