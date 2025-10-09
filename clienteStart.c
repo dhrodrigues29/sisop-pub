@@ -26,11 +26,7 @@
 
 // Tabela de IPs de destino disponíveis (exemplo)
 static const char *AVAILABLE_IPS[] = {
-    "127.0.0.1",
-    "192.168.1.100",
-    "10.0.0.5",
-    "172.16.0.1"
-    // Adicione mais IPs conforme necessário
+    "10.67.104.20"
 };
 #define NUM_IPS (sizeof(AVAILABLE_IPS) / sizeof(AVAILABLE_IPS[0]))
 
