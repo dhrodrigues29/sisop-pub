@@ -172,19 +172,25 @@ static void handle_discovery(int sockfd, struct sockaddr_in *peer, socklen_t pee
 }
 
 // send REQ_ACK to peer: ack_seqn, new_balance
+// status: ACK_OK, ACK_FAILED_INSUF_FUNDS, ACK_FAILED_DEST_NOT_REG
 static void send_req_ack(int sockfd, struct sockaddr_in *peer, socklen_t peerlen,
-                         uint32_t ack_seqn, uint32_t new_balance, ack_status_t status)
-{
-    char sbuf[11]; // type(2) + seqn(4) + new_balance(4) + status(1)
-    uint16_t t = htons(TYPE_REQ_ACK);
-    uint32_t s = htonl(ack_seqn);
-    uint32_t nb = htonl(new_balance);
-    memcpy(sbuf, &t, 2);
-    memcpy(sbuf + 2, &s, 4);
-    memcpy(sbuf + 6, &nb, 4);
-    sbuf[10] = (uint8_t)status;
-    sendto(sockfd, sbuf, 11, 0, (struct sockaddr*)peer, peerlen);
+                         uint32_t seqn, uint32_t balance, ack_status_t status) {
+    char buf[11]; // type(2) + seqn(4) + balance(4) + status(1) = 11 bytes
+    uint16_t type_n = htons(TYPE_REQ_ACK);
+    uint32_t seqn_n = htonl(seqn);
+    uint32_t bal_n  = htonl(balance);
+
+    memcpy(buf, &type_n, 2);
+    memcpy(buf + 2, &seqn_n, 4);
+    memcpy(buf + 6, &bal_n, 4);
+    buf[10] = (uint8_t)status;
+
+    ssize_t sent = sendto(sockfd, buf, sizeof(buf), 0, (struct sockaddr*)peer, peerlen);
+    if (sent < 0) {
+        perror("sendto req_ack");
+    }
 }
+
 
 
 // processing thread args
@@ -225,13 +231,12 @@ static void *process_request_thread(void *arg) {
     in.s_addr = htonl(dest_ip);
     inet_ntop(AF_INET, &in, dest_str, sizeof(dest_str));
 
-    // Acquire writer lock to update table and totals
     pthread_rwlock_wrlock(&table_lock);
 
     client_entry_t *origin = find_client(origin_ip);
     if (!origin) {
-        // unknown client -> reply with ack seqn 0 new_balance 0 (not registered)
-        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, 0, 0);
+        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, 0, 0, ACK_FAILED_DEST_NOT_REG);
+
         char tstamp[32];
         timestamp_now(tstamp, sizeof(tstamp));
         enqueue_message("%s client %s UNREGISTERED sent id req %u dest %s value %u - ignored (not registered)",
@@ -243,14 +248,10 @@ static void *process_request_thread(void *arg) {
 
     uint32_t expected = origin->last_req + 1;
     if (seqn == expected) {
-        // This is the next expected request -> process it (might be insufficient funds)
         client_entry_t *dest = find_client(dest_ip);
         if (!dest) {
-            // destination not registered -> treat as failed (do not process)
-            // but mark request as processed (update last_req) so client won't resend forever
             origin->last_req = seqn;
-            // totals unchanged
-            send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance);
+            send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_FAILED_DEST_NOT_REG);
 
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
@@ -263,16 +264,14 @@ static void *process_request_thread(void *arg) {
             return NULL;
         }
         if (value == 0) {
-            // balance check: treat as processed; do not change balances but update last_req
             origin->last_req = seqn;
-            send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance);
+            send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_OK);
 
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
             enqueue_message("%s client %s id req %u dest %s value %u (balance check) num transactions %llu total transferred %llu total balance %lld",
                             tstamp, origin_str, seqn, dest_str, value,
                             (unsigned long long)num_transactions, (unsigned long long)total_transferred, (long long)total_balance);
-
             pthread_rwlock_unlock(&table_lock);
             free(pa);
             return NULL;
@@ -287,7 +286,6 @@ static void *process_request_thread(void *arg) {
                             tstamp, origin_str, seqn, dest_str, value,
                             (unsigned)origin->balance,
                             (unsigned long long)num_transactions, (unsigned long long)total_transferred, (long long)total_balance);
-
             pthread_rwlock_unlock(&table_lock);
             free(pa);
             return NULL;
@@ -298,47 +296,41 @@ static void *process_request_thread(void *arg) {
         origin->last_req = seqn;
         num_transactions++;
         total_transferred += value;
-        // total_balance unchanged for internal transfers (it was updated at discovery)
 
-        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance);
+        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_OK);
 
         char tstamp[32];
         timestamp_now(tstamp, sizeof(tstamp));
         enqueue_message("%s client %s id req %u dest %s value %u\nnum transactions %llu\ntotal transferred %llu total balance %lld",
                         tstamp, origin_str, seqn, dest_str, value,
                         (unsigned long long)num_transactions, (unsigned long long)total_transferred, (long long)total_balance);
-
         pthread_rwlock_unlock(&table_lock);
         free(pa);
         return NULL;
     } else if (seqn <= origin->last_req) {
-        // duplicate retransmission: do not reprocess; resend ack with last_req
-        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, origin->last_req, origin->balance);
+        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, origin->last_req, origin->balance, ACK_OK);
 
         char tstamp[32];
         timestamp_now(tstamp, sizeof(tstamp));
-        // Print message with DUP!!
         enqueue_message("%s client %s DUP!! id req %u dest %s value %u num transactions %llu total transferred %llu total balance %lld",
                         tstamp, origin_str, seqn, dest_str, value,
                         (unsigned long long)num_transactions, (unsigned long long)total_transferred, (long long)total_balance);
-
         pthread_rwlock_unlock(&table_lock);
         free(pa);
         return NULL;
-    } else { // seqn > expected
-        // missing prior request(s): inform client via ack with last processed (origin->last_req)
-        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, origin->last_req, origin->balance);
+    } else {
+        send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, origin->last_req, origin->balance, ACK_OK);
 
         char tstamp[32];
         timestamp_now(tstamp, sizeof(tstamp));
         enqueue_message("%s client %s OUT_OF_ORDER id req %u (expected %u) dest %s value %u -> acking last %u",
                         tstamp, origin_str, seqn, expected, dest_str, value, origin->last_req);
-
         pthread_rwlock_unlock(&table_lock);
         free(pa);
         return NULL;
     }
 }
+
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
