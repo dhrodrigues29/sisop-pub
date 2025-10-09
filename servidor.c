@@ -29,6 +29,13 @@
 #define TYPE_REQ       3
 #define TYPE_REQ_ACK   4
 
+typedef enum {
+    ACK_OK = 0,
+    ACK_FAILED_INSUF_FUNDS = 1,
+    ACK_FAILED_DEST_NOT_REG = 2
+} ack_status_t;
+
+
 typedef struct client_entry {
     uint32_t ip; // host byte order
     uint32_t last_req;
@@ -165,16 +172,20 @@ static void handle_discovery(int sockfd, struct sockaddr_in *peer, socklen_t pee
 }
 
 // send REQ_ACK to peer: ack_seqn, new_balance
-static void send_req_ack(int sockfd, struct sockaddr_in *peer, socklen_t peerlen, uint32_t ack_seqn, uint32_t new_balance) {
-    char sbuf[12];
+static void send_req_ack(int sockfd, struct sockaddr_in *peer, socklen_t peerlen,
+                         uint32_t ack_seqn, uint32_t new_balance, ack_status_t status)
+{
+    char sbuf[11]; // type(2) + seqn(4) + new_balance(4) + status(1)
     uint16_t t = htons(TYPE_REQ_ACK);
     uint32_t s = htonl(ack_seqn);
     uint32_t nb = htonl(new_balance);
     memcpy(sbuf, &t, 2);
     memcpy(sbuf + 2, &s, 4);
     memcpy(sbuf + 6, &nb, 4);
-    sendto(sockfd, sbuf, 10, 0, (struct sockaddr*)peer, peerlen);
+    sbuf[10] = (uint8_t)status;
+    sendto(sockfd, sbuf, 11, 0, (struct sockaddr*)peer, peerlen);
 }
+
 
 // processing thread args
 typedef struct {
@@ -267,13 +278,9 @@ static void *process_request_thread(void *arg) {
             return NULL;
         }
         if (origin->balance < value) {
-            // mark request as processed, do NOT change balances
             origin->last_req = seqn;
+            send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_FAILED_INSUF_FUNDS);
 
-            // envia ack com saldo atual (sem alterar balances)
-            send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance);
-
-            // apenas log informativo
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
             enqueue_message("%s client %s id req %u dest %s value %u FAILED: saldo insuficiente (current balance %u) num transactions %llu total transferred %llu total balance %lld",

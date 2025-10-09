@@ -26,6 +26,12 @@
 #define TYPE_REQ       3
 #define TYPE_REQ_ACK   4
 
+typedef enum {
+    ACK_OK = 0,
+    ACK_FAILED_INSUF_FUNDS = 1,
+    ACK_FAILED_DEST_NOT_REG = 2
+} ack_status_t;
+
 static volatile int running = 1;
 
 static void handle_sigint(int signo) {
@@ -228,41 +234,45 @@ int main(int argc, char *argv[]) {
                     memcpy(&rtype, rbuf, 2);
                     rtype = ntohs(rtype);
                     if (rtype == TYPE_REQ_ACK) {
-                        uint32_t ack_seqn_n, newbal_n;
-                        if (r >= 10) {
-                            memcpy(&ack_seqn_n, rbuf + 2, 4);
-                            memcpy(&newbal_n, rbuf + 6, 4);
-                            uint32_t ack_seqn = ntohl(ack_seqn_n);
-                            uint32_t newbal = ntohl(newbal_n);
-                            char tstamp[64];
-                            timestamp_now(tstamp, sizeof(tstamp));
-                            char saddr_str[INET_ADDRSTRLEN];
-                            inet_ntop(AF_INET, &serveraddr.sin_addr, saddr_str, sizeof(saddr_str));
+    uint32_t ack_seqn_n, newbal_n;
+    uint8_t status_byte = 0;
+    if (r >= 11) { // 11 bytes agora
+        memcpy(&ack_seqn_n, rbuf + 2, 4);
+        memcpy(&newbal_n, rbuf + 6, 4);
+        status_byte = (uint8_t)rbuf[10];
 
-                            if (ack_seqn == seqn) {
-                                // ok, processed (or processed but failed, but ack says processed)
-                                // apenas exibir saldo atualizado, sem tentar inferir falha
-                                enqueue_message("%s server %s id req %u dest %s value %u new balance %u",
-                                                tstamp, saddr_str, seqn, dest_str, value, newbal);
-                                seqn++;
-                                acknowledged = 1;
-                                break;
-                            } else if (ack_seqn < seqn) {
-                                // server indicates last processed is smaller: resend
-                                enqueue_message("%s server ack last %u (we sent %u) -> resending",
-                                                tstamp, ack_seqn, seqn);
-                                // loop continuará para reenviar
-                            } else {
-                                // ack_seqn > seqn (inesperado) - aceitar e avançar
-                                enqueue_message("%s server ack unexpected %u (we sent %u) -> advancing",
-                                                tstamp, ack_seqn, seqn);
-                                seqn = ack_seqn + 1;
-                                acknowledged = 1;
-                                break;
-                            }
-                        }
-                    } else if (rtype == TYPE_DESC_ACK) {
-                        // ignore (already discovered)
+        uint32_t ack_seqn = ntohl(ack_seqn_n);
+        uint32_t newbal = ntohl(newbal_n);
+        ack_status_t status = (ack_status_t)status_byte;
+
+        char tstamp[64];
+        timestamp_now(tstamp, sizeof(tstamp));
+        char saddr_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &serveraddr.sin_addr, saddr_str, sizeof(saddr_str));
+                    if (ack_seqn == seqn) {
+                        // ok, processed (ou falha) - agora exibimos status
+                        const char *status_str = "OK";
+                        if (status == ACK_FAILED_INSUF_FUNDS) status_str = "FAILED: saldo insuficiente";
+                        else if (status == ACK_FAILED_DEST_NOT_REG) status_str = "FAILED: destino nao registrado";
+
+                        enqueue_message("%s server %s id req %u dest %s value %u new balance %u status %s",
+                                        tstamp, saddr_str, seqn, dest_str, value, newbal, status_str);
+
+                        seqn++;
+                        acknowledged = 1;
+                        break;
+                    } else if (ack_seqn < seqn) {
+                        // server indicates last processed is menor -> reenviar
+                        enqueue_message("%s server ack last %u (we sent %u) -> resending",
+                                        tstamp, ack_seqn, seqn);
+                        // loop continua para reenviar
+                    } else {
+                        // ack_seqn > seqn (inesperado) - aceitar e avançar
+                        enqueue_message("%s server ack unexpected %u (we sent %u) -> advancing",
+                                        tstamp, ack_seqn, seqn);
+                        seqn = ack_seqn + 1;
+                        acknowledged = 1;
+                        break;
                     }
                 }
             } else if (rv == 0) {
