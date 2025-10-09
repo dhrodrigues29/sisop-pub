@@ -13,12 +13,10 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <pthread.h>
-
 #include <stdint.h>
 #include <signal.h>
 #include <sys/select.h>
 #include <stdarg.h>
-
 
 #define BUF_SIZE 512
 #define TYPE_DESC      1
@@ -52,6 +50,7 @@ typedef struct msg_node {
     char *msg;
     struct msg_node *next;
 } msg_node_t;
+
 static msg_node_t *msg_head = NULL, *msg_tail = NULL;
 static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
@@ -150,6 +149,7 @@ int main(int argc, char *argv[]) {
     socklen_t serverlen = sizeof(serveraddr);
     char rbuf[BUF_SIZE];
     ssize_t rlen;
+
     while (1) {
         rlen = recvfrom(sockfd, rbuf, sizeof(rbuf), 0, (struct sockaddr*)&serveraddr, &serverlen);
         if (rlen < 0) {
@@ -182,20 +182,15 @@ int main(int argc, char *argv[]) {
     // reading loop: read commands from stdin (no prompt), send each request and wait for ack (timeout 10ms)
     uint32_t seqn = 1;
     char line[256];
+
     while (running && fgets(line, sizeof(line), stdin) != NULL) {
-        // each command: IP_DESTINO VALOR
         char dest_str[64];
         uint32_t value;
-        if (sscanf(line, "%63s %u", dest_str, &value) != 2) {
-            // invalid line - ignore silently
-            continue;
-        }
+        if (sscanf(line, "%63s %u", dest_str, &value) != 2) continue;
+
         struct in_addr dest_in;
-        if (inet_pton(AF_INET, dest_str, &dest_in) != 1) {
-            // invalid IP - ignore
-            continue;
-        }
-        uint32_t dest_ip = ntohl(dest_in.s_addr); // store as host order for packet later
+        if (inet_pton(AF_INET, dest_str, &dest_in) != 1) continue;
+        uint32_t dest_ip = ntohl(dest_in.s_addr);
 
         // prepare request buffer: type(2) seqn(4) dest(4) value(4)
         char sbuf[16];
@@ -213,9 +208,7 @@ int main(int argc, char *argv[]) {
         int acknowledged = 0;
         while (running && !acknowledged) {
             ssize_t sent = sendto(sockfd, sbuf, slen, 0, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
-            if (sent < 0) {
-                perror("sendto");
-            }
+            if (sent < 0) perror("sendto");
 
             // wait for response with select timeout 10ms
             fd_set rfds;
@@ -225,6 +218,7 @@ int main(int argc, char *argv[]) {
             tv.tv_sec = 0;
             tv.tv_usec = 10000; // 10 ms
             int rv = select(sockfd + 1, &rfds, NULL, NULL, &tv);
+
             if (rv > 0 && FD_ISSET(sockfd, &rfds)) {
                 struct sockaddr_in peer;
                 socklen_t plen = sizeof(peer);
@@ -233,55 +227,47 @@ int main(int argc, char *argv[]) {
                     uint16_t rtype;
                     memcpy(&rtype, rbuf, 2);
                     rtype = ntohs(rtype);
+
                     if (rtype == TYPE_REQ_ACK) {
-    uint32_t ack_seqn_n, newbal_n;
-    uint8_t status_byte = 0;
-    if (r >= 11) { // 11 bytes agora
-        memcpy(&ack_seqn_n, rbuf + 2, 4);
-        memcpy(&newbal_n, rbuf + 6, 4);
-        status_byte = (uint8_t)rbuf[10];
+                        uint32_t ack_seqn_n, newbal_n;
+                        uint8_t status_byte = 0;
+                        if (r >= 11) {
+                            memcpy(&ack_seqn_n, rbuf + 2, 4);
+                            memcpy(&newbal_n, rbuf + 6, 4);
+                            status_byte = (uint8_t)rbuf[10];
 
-        uint32_t ack_seqn = ntohl(ack_seqn_n);
-        uint32_t newbal = ntohl(newbal_n);
-        ack_status_t status = (ack_status_t)status_byte;
+                            uint32_t ack_seqn = ntohl(ack_seqn_n);
+                            uint32_t newbal = ntohl(newbal_n);
+                            ack_status_t status = (ack_status_t)status_byte;
 
-        char tstamp[64];
-        timestamp_now(tstamp, sizeof(tstamp));
-        char saddr_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &serveraddr.sin_addr, saddr_str, sizeof(saddr_str));
-                    if (ack_seqn == seqn) {
-                        // ok, processed (ou falha) - agora exibimos status
-                        const char *status_str = "OK";
-                        if (status == ACK_FAILED_INSUF_FUNDS) status_str = "FAILED: saldo insuficiente";
-                        else if (status == ACK_FAILED_DEST_NOT_REG) status_str = "FAILED: destino nao registrado";
+                            char tstamp[64];
+                            timestamp_now(tstamp, sizeof(tstamp));
+                            char saddr_str[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &serveraddr.sin_addr, saddr_str, sizeof(saddr_str));
 
-                        enqueue_message("%s server %s id req %u dest %s value %u new balance %u status %s",
-                                        tstamp, saddr_str, seqn, dest_str, value, newbal, status_str);
+                            if (ack_seqn == seqn) {
+                                const char *status_str = "OK";
+                                if (status == ACK_FAILED_INSUF_FUNDS) status_str = "FAILED: saldo insuficiente";
+                                else if (status == ACK_FAILED_DEST_NOT_REG) status_str = "FAILED: destino nao registrado";
 
-                        seqn++;
-                        acknowledged = 1;
-                        break;
-                    } else if (ack_seqn < seqn) {
-                        // server indicates last processed is menor -> reenviar
-                        enqueue_message("%s server ack last %u (we sent %u) -> resending",
-                                        tstamp, ack_seqn, seqn);
-                        // loop continua para reenviar
-                    } else {
-                        // ack_seqn > seqn (inesperado) - aceitar e avançar
-                        enqueue_message("%s server ack unexpected %u (we sent %u) -> advancing",
-                                        tstamp, ack_seqn, seqn);
-                        seqn = ack_seqn + 1;
-                        acknowledged = 1;
-                        break;
+                                enqueue_message("%s server %s id req %u dest %s value %u new balance %u status %s",
+                                                tstamp, saddr_str, seqn, dest_str, value, newbal, status_str);
+                                seqn++;
+                                acknowledged = 1;
+                                break;
+                            } else if (ack_seqn < seqn) {
+                                enqueue_message("%s server ack last %u (we sent %u) -> resending",
+                                                tstamp, ack_seqn, seqn);
+                            } else {
+                                enqueue_message("%s server ack unexpected %u (we sent %u) -> advancing",
+                                                tstamp, ack_seqn, seqn);
+                                seqn = ack_seqn + 1;
+                                acknowledged = 1;
+                                break;
+                            }
+                        }
                     }
                 }
-            } else if (rv == 0) {
-                // timeout: resend
-                // continue loop which resends
-            } else {
-                // select error
-                if (errno == EINTR) continue;
-                perror("select");
             }
         } // end resend loop
     } // end stdin loop
@@ -291,14 +277,10 @@ int main(int argc, char *argv[]) {
     pthread_cond_signal(&queue_cond);
     close(sockfd);
 
-    // small sleep to allow printer to flush
     struct timespec ts;
-    ts.tv_sec = 0;            // segundos
-    ts.tv_nsec = 50 * 1000 * 1000; // 50ms em nanosegundos
+    ts.tv_sec = 0;
+    ts.tv_nsec = 50 * 1000 * 1000; // 50ms
     nanosleep(&ts, NULL);
 
     return 0;
 }
-
-
-
