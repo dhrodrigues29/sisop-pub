@@ -267,17 +267,20 @@ static void *process_request_thread(void *arg) {
             return NULL;
         }
         if (origin->balance < value) {
-            // insufficient funds: mark as processed (so client won't keep resending)
+            // mark request as processed, do NOT change balances
             origin->last_req = seqn;
+
+            // envia ack com saldo atual (sem alterar balances)
             send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance);
 
+            // apenas log informativo
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
-            enqueue_message("%s client %s id req %u dest %s value %u"
-                            " INSUFFICIENT_FUNDS new_balance %u num transactions %llu total transferred %llu total balance %lld",
+            enqueue_message("%s client %s id req %u dest %s value %u FAILED: saldo insuficiente (current balance %u) num transactions %llu total transferred %llu total balance %lld",
                             tstamp, origin_str, seqn, dest_str, value,
                             (unsigned)origin->balance,
                             (unsigned long long)num_transactions, (unsigned long long)total_transferred, (long long)total_balance);
+
             pthread_rwlock_unlock(&table_lock);
             free(pa);
             return NULL;

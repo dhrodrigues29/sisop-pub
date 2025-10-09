@@ -241,13 +241,9 @@ int main(int argc, char *argv[]) {
 
                             if (ack_seqn == seqn) {
                                 // ok, processed (or processed but failed, but ack says processed)
-                                if (value > newbal) {
-                                    enqueue_message("%s server %s id req %u dest %s value %u FAILED: saldo insuficiente (current balance %u)",
-                                                    tstamp, saddr_str, seqn, dest_str, value, newbal);
-                                } else {
-                                    enqueue_message("%s server %s id req %u dest %s value %u new balance %u",
-                                                    tstamp, saddr_str, seqn, dest_str, value, newbal);
-                                }
+                                // apenas exibir saldo atualizado, sem tentar inferir falha
+                                enqueue_message("%s server %s id req %u dest %s value %u new balance %u",
+                                                tstamp, saddr_str, seqn, dest_str, value, newbal);
                                 seqn++;
                                 acknowledged = 1;
                                 break;
