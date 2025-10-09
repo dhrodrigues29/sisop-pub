@@ -283,7 +283,15 @@ int main(int argc, char *argv[]) {
     running = 0;
     pthread_cond_signal(&queue_cond);
     close(sockfd);
+
     // small sleep to allow printer to flush
-    usleep(50000);
+    struct timespec ts;
+    ts.tv_sec = 0;            // segundos
+    ts.tv_nsec = 50 * 1000 * 1000; // 50ms em nanosegundos
+    nanosleep(&ts, NULL);
+
     return 0;
 }
+
+
+

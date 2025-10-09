@@ -363,9 +363,16 @@ int main(int argc, char *argv[]) {
         } // end resend loop
     } // end stdin loop
 
+    // cleanup
     running = 0;
     pthread_cond_signal(&queue_cond);
     close(sockfd);
-    usleep(50000);
+
+    // small sleep to allow printer to flush
+    struct timespec ts;
+    ts.tv_sec = 0;            // segundos
+    ts.tv_nsec = 50 * 1000 * 1000; // 50ms em nanosegundos
+    nanosleep(&ts, NULL);
+
     return 0;
 }
