@@ -246,11 +246,11 @@ int main(int argc, char *argv[]) {
                             inet_ntop(AF_INET, &serveraddr.sin_addr, saddr_str, sizeof(saddr_str));
 
                             if (ack_seqn == seqn) {
-                                const char *status_str = "OK";
+                                const char *status_str = "";
                                 if (status == ACK_FAILED_INSUF_FUNDS) status_str = "FAILED: saldo insuficiente";
                                 else if (status == ACK_FAILED_DEST_NOT_REG) status_str = "FAILED: destino nao registrado";
 
-                                enqueue_message("%s server %s id req %u dest %s value %u status %s new balance %u",
+                                enqueue_message("%s server %s id req %u dest %s value %u %s new balance %u",
                                             tstamp, saddr_str, seqn, dest_str, value, status_str, newbal);
                                 seqn++;
                                 acknowledged = 1;
