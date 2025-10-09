@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <stdarg.h>
+
 
 #define BUF_SIZE 512
 #define TYPE_DESC      1
