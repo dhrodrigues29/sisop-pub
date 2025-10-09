@@ -235,8 +235,11 @@ static void *process_request_thread(void *arg) {
             send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_FAILED_DEST_NOT_REG);
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
-            enqueue_message("%s client %s id req %u dest %s value %u DEST_NOT_REGISTERED",
-                            tstamp, origin_str, seqn, dest_str, value);
+            enqueue_message("%s client %s id req %u dest %s value %u DEST_NOT_REGISTERED\nnum transactions %llu total transferred %llu total balance %lld",
+                            tstamp, origin_str, seqn, dest_str, value,
+                            (unsigned long long)num_transactions,
+                            (unsigned long long)total_transferred,
+                            (long long)total_balance);
             pthread_rwlock_unlock(&table_lock);
             free(pa);
             return NULL;
@@ -246,8 +249,11 @@ static void *process_request_thread(void *arg) {
             send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_OK);
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
-            enqueue_message("%s client %s id req %u dest %s value %u (balance check)",
-                            tstamp, origin_str, seqn, dest_str, value);
+            enqueue_message("%s client %s id req %u dest %s value %u (balance check)\nnum transactions %llu total transferred %llu total balance %lld",
+                            tstamp, origin_str, seqn, dest_str, value,
+                            (unsigned long long)num_transactions,
+                            (unsigned long long)total_transferred,
+                            (long long)total_balance);
             pthread_rwlock_unlock(&table_lock);
             free(pa);
             return NULL;
@@ -257,8 +263,11 @@ static void *process_request_thread(void *arg) {
             send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_FAILED_INSUF_FUNDS);
             char tstamp[32];
             timestamp_now(tstamp, sizeof(tstamp));
-            enqueue_message("%s client %s id req %u dest %s value %u FAILED: saldo insuficiente",
-                            tstamp, origin_str, seqn, dest_str, value);
+            enqueue_message("%s client %s id req %u dest %s value %u FAILED: Saldo Insuficiente\nnum transactions %llu total transferred %llu total balance %lld",
+                            tstamp, origin_str, seqn, dest_str, value,
+                            (unsigned long long)num_transactions,
+                            (unsigned long long)total_transferred,
+                            (long long)total_balance);
             pthread_rwlock_unlock(&table_lock);
             free(pa);
             return NULL;
@@ -274,8 +283,11 @@ static void *process_request_thread(void *arg) {
         send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, seqn, origin->balance, ACK_OK);
         char tstamp[32];
         timestamp_now(tstamp, sizeof(tstamp));
-        enqueue_message("%s client %s id req %u dest %s value %u",
-                        tstamp, origin_str, seqn, dest_str, value);
+        enqueue_message("%s client %s id req %u dest %s value %u\nnum transactions %llu\ntotal transferred %llu total balance %lld",
+                        tstamp, origin_str, seqn, dest_str, value,
+                        (unsigned long long)num_transactions,
+                        (unsigned long long)total_transferred,
+                        (long long)total_balance);
         pthread_rwlock_unlock(&table_lock);
         free(pa);
         return NULL;
@@ -283,8 +295,11 @@ static void *process_request_thread(void *arg) {
         send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, origin->last_req, origin->balance, ACK_OK);
         char tstamp[32];
         timestamp_now(tstamp, sizeof(tstamp));
-        enqueue_message("%s client %s DUP!! id req %u dest %s value %u",
-                        tstamp, origin_str, seqn, dest_str, value);
+        enqueue_message("%s client %s DUP!! id req %u dest %s value %u\nnum transactions %llu total transferred %llu total balance %lld",
+                        tstamp, origin_str, seqn, dest_str, value,
+                        (unsigned long long)num_transactions,
+                        (unsigned long long)total_transferred,
+                        (long long)total_balance);
         pthread_rwlock_unlock(&table_lock);
         free(pa);
         return NULL;
@@ -292,8 +307,11 @@ static void *process_request_thread(void *arg) {
         send_req_ack(pa->sockfd, &pa->peer, pa->peerlen, origin->last_req, origin->balance, ACK_OK);
         char tstamp[32];
         timestamp_now(tstamp, sizeof(tstamp));
-        enqueue_message("%s client %s OUT_OF_ORDER id req %u (expected %u) dest %s value %u",
-                        tstamp, origin_str, seqn, expected, dest_str, value);
+        enqueue_message("%s client %s OUT_OF_ORDER id req %u (expected %u) dest %s value %u\nnum transactions %llu total transferred %llu total balance %lld",
+                        tstamp, origin_str, seqn, expected, dest_str, value,
+                        (unsigned long long)num_transactions,
+                        (unsigned long long)total_transferred,
+                        (long long)total_balance);
         pthread_rwlock_unlock(&table_lock);
         free(pa);
         return NULL;

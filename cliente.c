@@ -250,8 +250,8 @@ int main(int argc, char *argv[]) {
                                 if (status == ACK_FAILED_INSUF_FUNDS) status_str = "FAILED: saldo insuficiente";
                                 else if (status == ACK_FAILED_DEST_NOT_REG) status_str = "FAILED: destino nao registrado";
 
-                                enqueue_message("%s server %s id req %u dest %s value %u new balance %u status %s",
-                                                tstamp, saddr_str, seqn, dest_str, value, newbal, status_str);
+                                enqueue_message("%s server %s id req %u dest %s value %u status %s new balance %u",
+                                            tstamp, saddr_str, seqn, dest_str, value, status_str, newbal);
                                 seqn++;
                                 acknowledged = 1;
                                 break;
