@@ -2,7 +2,6 @@
 // Compilar: gcc -O2 -std=c11 cliente.c -o cliente -lpthread
 
 #define _POSIX_C_SOURCE 200809L
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +36,7 @@ static void handle_sigint(int signo) {
     running = 0;
 }
 
-// timestamp
+// pega timestamp atual
 static void timestamp_now(char *out, size_t n) {
     time_t t = time(NULL);
     struct tm tm;
@@ -45,7 +44,7 @@ static void timestamp_now(char *out, size_t n) {
     strftime(out, n, "%Y-%m-%d %H:%M:%S", &tm);
 }
 
-// print queue
+// fila de mensagens (usada pela thread de impressão)
 typedef struct msg_node {
     char *msg;
     struct msg_node *next;
@@ -55,6 +54,7 @@ static msg_node_t *msg_head = NULL, *msg_tail = NULL;
 static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
 
+// adiciona msg à fila (região crítica)
 static void enqueue_message(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -66,25 +66,24 @@ static void enqueue_message(const char *fmt, ...) {
     node->msg = strdup(buf);
     node->next = NULL;
 
-    pthread_mutex_lock(&queue_mutex);
+    pthread_mutex_lock(&queue_mutex); // início da seção crítica
     if (msg_tail) {
         msg_tail->next = node;
         msg_tail = node;
     } else {
         msg_head = msg_tail = node;
     }
-    pthread_cond_signal(&queue_cond);
-    pthread_mutex_unlock(&queue_mutex);
+    pthread_cond_signal(&queue_cond); // acorda thread impressora
+    pthread_mutex_unlock(&queue_mutex); // fim da seção crítica
 }
 
-// printer thread: prints messages enqueued
+// thread que imprime as mensagens da fila
 static void *printer_thread(void *arg) {
     (void)arg;
     while (running) {
         pthread_mutex_lock(&queue_mutex);
-        while (msg_head == NULL && running) {
-            pthread_cond_wait(&queue_cond, &queue_mutex);
-        }
+        while (msg_head == NULL && running)
+            pthread_cond_wait(&queue_cond, &queue_mutex); // espera algo na fila
         msg_node_t *cur = msg_head;
         msg_head = msg_tail = NULL;
         pthread_mutex_unlock(&queue_mutex);
@@ -103,17 +102,15 @@ static void *printer_thread(void *arg) {
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <udp_port>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <udp_port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
     int port = atoi(argv[1]);
-
     signal(SIGINT, handle_sigint);
 
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) { perror("socket"); exit(EXIT_FAILURE); }
 
-    // bind to any port (0) so we can receive replies
     struct sockaddr_in local;
     memset(&local, 0, sizeof(local));
     local.sin_family = AF_INET;
@@ -125,26 +122,22 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // enable broadcast for discovery
     int yes = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes)) < 0) {
-        perror("setsockopt SO_BROADCAST");
-    }
+    setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
 
-    // build broadcast address
     struct sockaddr_in baddr;
     memset(&baddr, 0, sizeof(baddr));
     baddr.sin_family = AF_INET;
     baddr.sin_port = htons(port);
     inet_pton(AF_INET, "255.255.255.255", &baddr.sin_addr);
 
-    // send discovery packet
+    // envio de broadcast pra descobrir servidor
     char dbuf[8];
     uint16_t t = htons(TYPE_DESC);
     memcpy(dbuf, &t, 2);
     sendto(sockfd, dbuf, 2, 0, (struct sockaddr*)&baddr, sizeof(baddr));
 
-    // wait for server response (blocking)
+    // aguarda resposta do servidor
     struct sockaddr_in serveraddr;
     socklen_t serverlen = sizeof(serveraddr);
     char rbuf[BUF_SIZE];
@@ -162,7 +155,6 @@ int main(int argc, char *argv[]) {
             memcpy(&rtype, rbuf, 2);
             rtype = ntohs(rtype);
             if (rtype == TYPE_DESC_ACK) {
-                // discovered server
                 char tstamp[64];
                 timestamp_now(tstamp, sizeof(tstamp));
                 char saddr_str[INET_ADDRSTRLEN];
@@ -174,12 +166,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // start printer thread
+    // cria thread para imprimir msgs
     pthread_t pth;
     pthread_create(&pth, NULL, printer_thread, NULL);
     pthread_detach(pth);
 
-    // reading loop: read commands from stdin (no prompt), send each request and wait for ack (timeout 10ms)
+    // leitura de comandos e envio de requisições
     uint32_t seqn = 1;
     char line[256];
 
@@ -192,7 +184,6 @@ int main(int argc, char *argv[]) {
         if (inet_pton(AF_INET, dest_str, &dest_in) != 1) continue;
         uint32_t dest_ip = ntohl(dest_in.s_addr);
 
-        // prepare request buffer: type(2) seqn(4) dest(4) value(4)
         char sbuf[16];
         uint16_t typ_n = htons(TYPE_REQ);
         uint32_t seqn_n = htonl(seqn);
@@ -204,19 +195,15 @@ int main(int argc, char *argv[]) {
         memcpy(sbuf + 10, &val_n, 4);
         ssize_t slen = 14;
 
-        // send and wait for ack (retransmit on timeout). Timeout = 10 ms
         int acknowledged = 0;
         while (running && !acknowledged) {
-            ssize_t sent = sendto(sockfd, sbuf, slen, 0, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
-            if (sent < 0) perror("sendto");
+            sendto(sockfd, sbuf, slen, 0, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
 
-            // wait for response with select timeout 10ms
+            // aguarda resposta (timeout 10ms)
             fd_set rfds;
             FD_ZERO(&rfds);
             FD_SET(sockfd, &rfds);
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 10000; // 10 ms
+            struct timeval tv = {0, 10000};
             int rv = select(sockfd + 1, &rfds, NULL, NULL, &tv);
 
             if (rv > 0 && FD_ISSET(sockfd, &rfds)) {
@@ -228,59 +215,53 @@ int main(int argc, char *argv[]) {
                     memcpy(&rtype, rbuf, 2);
                     rtype = ntohs(rtype);
 
-                    if (rtype == TYPE_REQ_ACK) {
+                    if (rtype == TYPE_REQ_ACK && r >= 11) {
                         uint32_t ack_seqn_n, newbal_n;
-                        uint8_t status_byte = 0;
-                        if (r >= 11) {
-                            memcpy(&ack_seqn_n, rbuf + 2, 4);
-                            memcpy(&newbal_n, rbuf + 6, 4);
-                            status_byte = (uint8_t)rbuf[10];
+                        uint8_t status_byte = (uint8_t)rbuf[10];
+                        memcpy(&ack_seqn_n, rbuf + 2, 4);
+                        memcpy(&newbal_n, rbuf + 6, 4);
 
-                            uint32_t ack_seqn = ntohl(ack_seqn_n);
-                            uint32_t newbal = ntohl(newbal_n);
-                            ack_status_t status = (ack_status_t)status_byte;
+                        uint32_t ack_seqn = ntohl(ack_seqn_n);
+                        uint32_t newbal = ntohl(newbal_n);
+                        ack_status_t status = (ack_status_t)status_byte;
 
-                            char tstamp[64];
-                            timestamp_now(tstamp, sizeof(tstamp));
-                            char saddr_str[INET_ADDRSTRLEN];
-                            inet_ntop(AF_INET, &serveraddr.sin_addr, saddr_str, sizeof(saddr_str));
+                        char tstamp[64];
+                        timestamp_now(tstamp, sizeof(tstamp));
+                        char saddr_str[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &serveraddr.sin_addr, saddr_str, sizeof(saddr_str));
 
-                            if (ack_seqn == seqn) {
-                                const char *status_str = "";
-                                if (status == ACK_FAILED_INSUF_FUNDS) status_str = "FAILED: saldo insuficiente";
-                                else if (status == ACK_FAILED_DEST_NOT_REG) status_str = "FAILED: destino nao registrado";
+                        if (ack_seqn == seqn) {
+                            const char *status_str = "";
+                            if (status == ACK_FAILED_INSUF_FUNDS) status_str = "FAILED: saldo insuficiente";
+                            else if (status == ACK_FAILED_DEST_NOT_REG) status_str = "FAILED: destino nao registrado";
 
-                                enqueue_message("%s server %s id req %u dest %s value %u %s new balance %u",
+                            enqueue_message("%s server %s id req %u dest %s value %u %s new balance %u",
                                             tstamp, saddr_str, seqn, dest_str, value, status_str, newbal);
-                                seqn++;
-                                acknowledged = 1;
-                                break;
-                            } else if (ack_seqn < seqn) {
-                                enqueue_message("%s server ack last %u (we sent %u) -> resending",
-                                                tstamp, ack_seqn, seqn);
-                            } else {
-                                enqueue_message("%s server ack unexpected %u (we sent %u) -> advancing",
-                                                tstamp, ack_seqn, seqn);
-                                seqn = ack_seqn + 1;
-                                acknowledged = 1;
-                                break;
-                            }
+                            seqn++;
+                            acknowledged = 1;
+                            break;
+                        } else if (ack_seqn < seqn) {
+                            enqueue_message("%s server ack last %u (we sent %u) -> resending",
+                                            tstamp, ack_seqn, seqn);
+                        } else {
+                            enqueue_message("%s server ack unexpected %u (we sent %u) -> advancing",
+                                            tstamp, ack_seqn, seqn);
+                            seqn = ack_seqn + 1;
+                            acknowledged = 1;
+                            break;
                         }
                     }
                 }
             }
-        } // end resend loop
-    } // end stdin loop
+        }
+    }
 
-    // cleanup
+    // encerramento seguro
     running = 0;
     pthread_cond_signal(&queue_cond);
     close(sockfd);
 
-    struct timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = 50 * 1000 * 1000; // 50ms
+    struct timespec ts = {0, 50 * 1000 * 1000};
     nanosleep(&ts, NULL);
-
     return 0;
 }
